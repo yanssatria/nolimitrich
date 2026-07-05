@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "ISI DENGAN NAMA GITHUB",
+  "name": "nolimitrich",
   "main": "_worker.js",
   "compatibility_date": "2025-09-27",
   "observability": {
@@ -16,8 +16,8 @@
   ],
   "vars": {
     "ALLOWED_ORIGINS": "https://nolimitrich.com,https://www.nolimitrich.com",
-    "APP_GAS_URL": "ISI LINK WEB APP GAS",
-    "MOOTA_GAS_URL": "ISI LINK WEB APP GAS",
+    "APP_GAS_URL": "https://script.google.com/macros/s/AKfycbwDoozB5pRMoVPk-VRm0HS7dRPjDFrDMpnVn5Zmfb5_DfRWl--41ebipOu_yThm-bmh/exec",
+    "MOOTA_GAS_URL": "https://script.google.com/macros/s/AKfycbwDoozB5pRMoVPk-VRm0HS7dRPjDFrDMpnVn5Zmfb5_DfRWl--41ebipOu_yThm-bmh/exec",
     "MOOTA_TOKEN": "TOKEN MOOTA"
   }
 }
