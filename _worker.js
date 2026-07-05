@@ -387,7 +387,8 @@ async function handleApi(request, env, ctx) {
     if (cacheMeta && cacheMeta.action) mapIncLimited(_topApiActions, cacheMeta.action, 80);
     const ttl = cacheMeta ? cacheTtls[cacheMeta.action] : 0;
     if (ttl > 0 && request.method === 'POST') {
-      const cacheKey = await buildApiCacheKey(request.url, cacheMeta.action, cacheMeta.key);
+      const publicCacheState = await getPublicCacheState(env);
+      const cacheKey = await buildApiCacheKey(request.url, cacheMeta.action, cacheMeta.key, publicCacheState);
       const cached = await caches.default.match(cacheKey);
       if (cached) {
         const cacheState = getCachedApiState(cached, ttl, env);
@@ -526,13 +527,14 @@ async function handleApiBatch(request, env, ctx, requestId, contentType, parsedB
   const gasUrl = env.APP_GAS_URL;
   const allowPartial = !!parsedBody.allow_partial;
   const cacheTtls = getApiCacheTtls(env);
+  const publicCacheState = await getPublicCacheState(env);
 
   const results = await Promise.all(items.map(async function (item, index) {
     const action = String(item.action || '');
     mapIncLimited(_topApiActions, 'batch:' + action, 80);
     const cacheMeta = getCacheMetaFromParsed(item);
     const ttl = cacheMeta ? Number(cacheTtls[cacheMeta.action] || 0) : 0;
-    const cacheKey = (ttl > 0) ? await buildApiCacheKey(request.url, cacheMeta.action, cacheMeta.key) : null;
+    const cacheKey = (ttl > 0) ? await buildApiCacheKey(request.url, cacheMeta.action, cacheMeta.key, publicCacheState) : null;
     const cached = cacheKey ? await caches.default.match(cacheKey) : null;
     if (cached && ttl > 0) {
       const cacheState = getCachedApiState(cached, ttl, env);
@@ -812,13 +814,63 @@ function isCacheableAssetPath(pathname) {
   );
 }
 
+// Cache public cache state for 5 seconds to avoid spamming GAS
+let _cachedPublicCacheState = null;
+let _cachedPublicCacheStateTs = 0;
+
+async function getPublicCacheState(env) {
+  const now = Date.now();
+  if (_cachedPublicCacheState && (now - _cachedPublicCacheStateTs) < 5000) {
+    return _cachedPublicCacheState;
+  }
+  try {
+    const gasUrl = env.APP_GAS_URL;
+    if (!gasUrl) return createDefaultPublicCacheState();
+    const res = await fetchWithRetry(gasUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_public_cache_state' })
+    }, { maxAttempts: 2, timeoutMs: 5000 });
+    const data = await res.json();
+    if (data && data.status === 'success' && data.data) {
+      _cachedPublicCacheState = data.data;
+      _cachedPublicCacheStateTs = Date.now();
+      return _cachedPublicCacheState;
+    }
+  } catch (e) {}
+  return createDefaultPublicCacheState();
+}
+
+function createDefaultPublicCacheState() {
+  const now = Date.now();
+  return { settings: now, catalog: now, pages: now, dashboard: now, last_updated: now };
+}
+
+function getCacheVersionForAction(action, cacheState) {
+  const state = cacheState || createDefaultPublicCacheState();
+  switch (action) {
+    case 'get_global_settings':
+      return String(state.settings || 0);
+    case 'get_products':
+    case 'get_product':
+      return String(state.catalog || 0);
+    case 'get_page_content':
+    case 'get_pages':
+      return String(state.pages || 0);
+    case 'get_dashboard_data':
+      return String(state.dashboard || 0);
+    default:
+      return String(state.last_updated || 0);
+  }
+}
+
 function resolveAssetCacheControl(pathname) {
   const p = String(pathname || '').toLowerCase();
   if (!p || p === '/' || p.endsWith('.html')) {
-    return 'public, max-age=60, s-maxage=300, stale-while-revalidate=600';
+    return 'public, max-age=10, s-maxage=30, stale-while-revalidate=60';
   }
   if (p.endsWith('/site.config.js') || p === '/site.config.js') {
-    return 'public, max-age=300, s-maxage=300, stale-while-revalidate=86400';
+    return 'public, max-age=60, s-maxage=120, stale-while-revalidate=300';
   }
   if (p.endsWith('/config.js') || p === '/config.js') {
     return 'public, max-age=86400, s-maxage=86400, immutable';
@@ -893,9 +945,10 @@ function getApiCacheTtls(env) {
   }
 }
 
-async function buildApiCacheKey(requestUrl, action, keyObj) {
+async function buildApiCacheKey(requestUrl, action, keyObj, cacheState) {
   const u = new URL(requestUrl);
-  const payload = JSON.stringify(keyObj || {});
+  const cacheVersion = getCacheVersionForAction(action, cacheState);
+  const payload = JSON.stringify({ ...(keyObj || {}), v: cacheVersion });
   const hash = await sha256Base64Url(payload);
   u.searchParams.set('a', String(action || ''));
   u.searchParams.set('k', hash);
